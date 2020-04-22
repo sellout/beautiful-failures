@@ -139,7 +139,7 @@ type family NotInIO a :: Constraint where
      'Text "`." ':$$:
      'Text "Try using the `throwIO` variant instead.")
   NotInIO (AccumT w m a) = NotInIO (m (a, w))
-  NotInIO (ContT _ _m a) = ()
+  NotInIO (ContT r m _) = NotInIO (m r)
   NotInIO (ExceptT e m a) = NotInIO (m (Either e a))
   NotInIO (IdentityT m a) = NotInIO (m a)
   NotInIO (MaybeT m a) = NotInIO (m (Maybe a))
