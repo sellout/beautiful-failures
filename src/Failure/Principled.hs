@@ -51,6 +51,7 @@ import qualified Control.Monad.Trans.Writer.Lazy as Lazy
 import qualified Control.Monad.Trans.Writer.Strict as Strict
 import Data.Kind (Constraint)
 import Data.Typeable (Typeable)
+import Failure.Principled.Show as Show
 import GHC.Stack (CallStack, HasCallStack, callStack, prettyCallStack)
 import GHC.TypeLits (ErrorMessage(..), TypeError)
 import System.Exit (exitFailure)
@@ -94,31 +95,15 @@ addCallStack e = CallStacked e callStack
 --   to add a stack to it.
 data ExceptFailure e = ExceptFailure { display :: e -> String, failure :: e }
 
-showInfix :: (Show a, Show b) => Int -> String -> a -> b -> Int -> ShowS
-showInfix n op x y p =
-  showParen (p > n) $ showsPrec (n + 1) x . showString op . showsPrec (n + 1) y
-
-showInfixl :: (Show a, Show b) => Int -> String -> a -> b -> Int -> ShowS
-showInfixl n op x y p =
-  showParen (p > n) $ showsPrec n x . showString op . showsPrec (n + 1) y
-
-showInfixr :: (Show a, Show b) => Int -> String -> a -> b -> Int -> ShowS
-showInfixr n op x y p =
-  showParen (p > n) $ showsPrec (n + 1) x . showString op . showsPrec n y
-
-showApp :: String -> [ShowS] -> Int -> ShowS
-showApp app args p =
-  showParen (p > 10) $ showString app . foldMap (showString " " .) args
-
-showArg :: Show a => a -> ShowS
-showArg = showsPrec 11
-
 -- | __NB__: This instance is /not/ `read`able. `Exception` extends `Show`, so
 --           to avoid having an extraneous @`Show` e@ constraint on @`Exception`
 --          (`ExceptFailure` e)@, we have to skip it here.
 instance Show (ExceptFailure e) where
   showsPrec p (ExceptFailure display failure) =
-    showApp "ExceptFailure" [showString "_", showString $ display failure] p
+    Show.appPrec
+      p
+      "ExceptFailure"
+      [showString "_", Show.arg $ display failure]
 
 instance Typeable e => Exception (ExceptFailure e) where
   displayException (ExceptFailure display failure) = display failure

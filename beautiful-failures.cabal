@@ -22,6 +22,7 @@ extra-source-files:  CHANGELOG.md, README.md
 library
   hs-source-dirs:      src
   exposed-modules:     Failure.Principled
+                     , Failure.Principled.Show
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.13 && <4.14
