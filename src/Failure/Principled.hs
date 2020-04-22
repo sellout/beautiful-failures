@@ -23,7 +23,10 @@ module Failure.Principled
     throwLeft,
     throwIOLeft,
     -- * to make exceptions useful as an exit mechanism
+    Display (..),
     displayMain,
+    catchIgnoringDisplay,
+    handleIgnoringDisplay,
     -- * throw checking
     NotInIO,
   )
@@ -183,17 +186,46 @@ throwLeft = either throw id
 throwIOLeft :: Exception e => Either e a -> IO a
 throwIOLeft = either throwIO pure
 
--- | This "fixes" @main@ to use `displayException` instead of `show` when failing with an exception.
+-- | A wrapper to convince GHC to use `displayException` when printing failures.
+newtype Display a = Display a
+
+-- | __NB__: This instance is /not/ `read`able. It simply calls
+--          `displayException` on the wrapped `Exception`, allowing programmers
+--           to not abuse their own `Show` instances while still getting better
+--           output from GHC.
+instance Exception e => Show (Display e) where
+  show (Display e) = displayException e
+
+instance Exception e => Exception (Display e)
+
+-- | This "fixes" @main@ to use `displayException` instead of `show` when
+--   failing with an exception.
+--
 --   Replace @main = x@ with @main = displayMain $ x@
+--
+--   This works by wrapping the `Exception` in a newtype that has the correct
+--   behavior, which means that if you want to try handling these exceptions
+--   outside a call to `displayMain`, you should be using
+--  `handleIgnoringDisplay` (or `catchIgnoringDisplay`).
 --
 --   See [Why doesn’t GHC use my `displayException`
 --   method?](https://stackoverflow.com/questions/55490766/why-doesn-t-ghc-use-my-displayexception-method)
---   for some explanation. I find it totally unconvincing, and I think Kmett's comment about
---  "\'helpful\' `Show` instances" makes the argument /for/ using `displayException` -- with the
---   current behavior, users are encouraged to define a custom `show` to get GHC to output a useful
---   failure message, which then breaks the _intended_ use of `show` as an syntax printer.
+--   for some explanation. I find it totally unconvincing, and I think Kmett's
+--   comment about "\'helpful\' `Show` instances" makes the argument /for/ using
+--  `displayException` -- with the current behavior, users are encouraged to
+--   define a custom `show` to get GHC to output a useful failure message, which
+--   then breaks the /intended/ use of `show` as an syntax printer.
 displayMain :: IO () -> IO ()
 displayMain =
-  handle
-    (\e ->
-      hPutStr stderr (displayException (e :: SomeException)) *> exitFailure)
+  -- Using `handleIgnoringDisplay` in order to avoid re-wrapping already-wrapped
+  -- exceptions.
+  handleIgnoringDisplay (\e -> throwIO (Display (e :: SomeException)))
+
+-- | Handles an exception that /may/ be wrapped in the `Display` @newytpe@,
+--   unwrapping it if necessary.
+handleIgnoringDisplay :: Exception e => (e -> IO a) -> IO a -> IO a
+handleIgnoringDisplay f = handle f . handle (\(Display e) -> f e)
+
+-- | See `handleIgnoringDisplay`.
+catchIgnoringDisplay :: Exception e => IO a -> (e -> IO a) -> IO a
+catchIgnoringDisplay = flip handleIgnoringDisplay
