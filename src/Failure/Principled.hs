@@ -3,10 +3,15 @@
            , TypeOperators
            , UndecidableInstances #-}
 
+-- | Various tools for improving the quality of the failures in your programs.
+--   This is meant to encourage you to "do the right thing" more often.
 module Failure.Principled
-  ( -- * attach a `CallStack` to exceptions
+  ( -- * A better `Except.throw`
+    throw,
+    -- * attach a `CallStack` to exceptions
     CallStacked (..),
     catchIgnoringStack,
+    handleIgnoringStack,
     addCallStack,
     throwWithCallStack,
     throwIOWithCallStack,
@@ -24,6 +29,8 @@ module Failure.Principled
   )
 where
 
+import           Control.Exception (Exception (..), SomeException, catch, handle, throwIO)
+import qualified Control.Exception as Except
 import           Control.Monad.Trans.Accum
 import           Control.Monad.Trans.Cont
 import           Control.Monad.Trans.Except
@@ -39,7 +46,6 @@ import qualified Control.Monad.Trans.State.Strict as Strict
 import qualified Control.Monad.Trans.Writer.CPS as CPS
 import qualified Control.Monad.Trans.Writer.Lazy as Lazy
 import qualified Control.Monad.Trans.Writer.Strict as Strict
-import Control.Exception (Exception (..), SomeException, catch, handle, throw, throwIO)
 import Data.Kind (Constraint)
 import Data.Typeable (Typeable)
 import GHC.Stack (CallStack, HasCallStack, callStack, prettyCallStack)
@@ -47,16 +53,26 @@ import GHC.TypeLits (ErrorMessage(..), TypeError)
 import System.Exit (exitFailure)
 import System.IO (IO, hPutStr, stderr)
 
+-- | A replacement for `Except.throw` that complains if you should be calling
+--  `throwIO` instead.
+throw :: (Exception e, NotInIO a) => e -> a
+throw = Except.throw
+
 -- | An Exception that simply wraps another exception to attach a call stack
 data CallStacked e = CallStacked { exception :: e, calls :: CallStack }
   deriving Show
 
--- | Like `catch`, but checks for both the "bare" and `CallStacked` versions of
---   an exception. This does mean that if you re-throw you'll discard the
---   original `CallStack`.
+-- | See `handleIgnoringStack`.
 catchIgnoringStack :: Exception e => IO a -> (e -> IO a) -> IO a
-catchIgnoringStack input f =
-  catch (catch input f) (\(CallStacked e _) -> f e)
+catchIgnoringStack = flip handleIgnoringStack
+
+-- | Like `handle`, but checks for both the "bare" and `CallStacked` versions of
+--   an exception.
+--
+--  __NB__: This does mean that if you re-`throwIO` you'll discard the original
+--         `CallStack`.
+handleIgnoringStack :: Exception e => (e -> IO a) -> IO a -> IO a
+handleIgnoringStack f = handle f . handle (\(CallStacked e _) -> f e)
 
 instance Exception e => Exception (CallStacked e) where
   displayException (CallStacked e calls') = displayException e <> "\n" <> prettyCallStack calls'
@@ -94,7 +110,7 @@ showApp app args p =
 showArg :: Show a => a -> ShowS
 showArg = showsPrec 11
 
--- | __NB__: This instance is _not_ `read`able. `Exception` extends `Show`, so
+-- | __NB__: This instance is /not/ `read`able. `Exception` extends `Show`, so
 --           to avoid having an extraneous @`Show` e@ constraint on @`Exception`
 --          (`ExceptFailure` e)@, we have to skip it here.
 instance Show (ExceptFailure e) where
