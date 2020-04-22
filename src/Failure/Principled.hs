@@ -24,7 +24,7 @@ module Failure.Principled
     throwIOLeft,
     -- * to make exceptions useful as an exit mechanism
     Display (..),
-    displayMain,
+    displayExceptions,
     catchIgnoringDisplay,
     handleIgnoringDisplay,
     -- * throw checking
@@ -186,11 +186,13 @@ instance Exception e => Exception (Display e)
 -- | This "fixes" @main@ to use `displayException` instead of `show` when
 --   failing with an exception.
 --
---   Replace @main = x@ with @main = displayMain $ x@
+--   E.g., replace @main = x@ with @main = displayExceptions $ x@. This is also
+--   useful before `unsafePerformIO` if you won't get control back again (like,
+--   in a GHC plugin).
 --
 --   This works by wrapping the `Exception` in a newtype that has the correct
 --   behavior, which means that if you want to try handling these exceptions
---   outside a call to `displayMain`, you should be using
+--   outside a call to `displayExceptions`, you should be using
 --  `handleIgnoringDisplay` (or `catchIgnoringDisplay`).
 --
 --   See [Why doesn’t GHC use my `displayException`
@@ -200,8 +202,8 @@ instance Exception e => Exception (Display e)
 --  `displayException` -- with the current behavior, users are encouraged to
 --   define a custom `show` to get GHC to output a useful failure message, which
 --   then breaks the /intended/ use of `show` as an syntax printer.
-displayMain :: IO () -> IO ()
-displayMain =
+displayExceptions :: IO a -> IO a
+displayExceptions =
   -- Using `handleIgnoringDisplay` in order to avoid re-wrapping already-wrapped
   -- exceptions.
   handleIgnoringDisplay (\e -> throwIO (Display (e :: SomeException)))
