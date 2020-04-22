@@ -90,6 +90,10 @@ addCallStack e = CallStacked e callStack
 --   locally-defined message and still leave it up to someone to catch it if
 --   necessary.
 --
+--   Without this, being able to `throw` your structured errors means defining a
+--   `Show` instance (that you might not otherwise want) right next to the error
+--   definition rather than close to the user.
+--
 --   Since this is likely to be used far from where an error occurs, it doesn't
 --   include a `CallStack`. But `CallStacked . Lifted` is available if you want
 --   to add a stack to it.
