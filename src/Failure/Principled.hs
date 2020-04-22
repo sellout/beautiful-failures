@@ -19,9 +19,26 @@ module Failure.Principled
     throwIOLeft,
     -- * to make exceptions useful as an exit mechanism
     displayMain,
+    -- * throw checking
+    NotInIO,
   )
 where
 
+import           Control.Monad.Trans.Accum
+import           Control.Monad.Trans.Cont
+import           Control.Monad.Trans.Except
+import           Control.Monad.Trans.Identity
+import           Control.Monad.Trans.Maybe
+import qualified Control.Monad.Trans.RWS.CPS as CPS
+import qualified Control.Monad.Trans.RWS.Lazy as Lazy
+import qualified Control.Monad.Trans.RWS.Strict as Strict
+import           Control.Monad.Trans.Reader
+import           Control.Monad.Trans.Select
+import qualified Control.Monad.Trans.State.Lazy as Lazy
+import qualified Control.Monad.Trans.State.Strict as Strict
+import qualified Control.Monad.Trans.Writer.CPS as CPS
+import qualified Control.Monad.Trans.Writer.Lazy as Lazy
+import qualified Control.Monad.Trans.Writer.Strict as Strict
 import Control.Exception (Exception (..), SomeException, catch, handle, throw, throwIO)
 import Data.Kind (Constraint)
 import Data.Typeable (Typeable)
@@ -77,37 +94,56 @@ showApp app args p =
 showArg :: Show a => a -> ShowS
 showArg = showsPrec 11
 
--- | This instance is _not_ `read`able. Unfortunately, GHC doesn't use
---  `displayException` to print exceptions to `stderr`, so we're forced to abuse
---  `show` instead.
-instance Show e => Show (ExceptFailure e) where
-  showsPrec p (ExceptFailure _ failure) =
-    showApp "ExceptFailure" [showString "_", showArg failure] p
+-- | __NB__: This instance is _not_ `read`able. `Exception` extends `Show`, so
+--           to avoid having an extraneous @`Show` e@ constraint on @`Exception`
+--          (`ExceptFailure` e)@, we have to skip it here.
+instance Show (ExceptFailure e) where
+  showsPrec p (ExceptFailure display failure) =
+    showApp "ExceptFailure" [showString "_", showString $ display failure] p
 
--- | This instance (and thus, `throw` functions built on it) require a @`Show`
---   e@ only incidentally, as `Exception` requires `Show` (even though this
---   instance doesn't use the `Show` constraint).
-instance (Show e, Typeable e) => Exception (ExceptFailure e) where
+instance Typeable e => Exception (ExceptFailure e) where
   displayException (ExceptFailure display failure) = display failure
 
--- | Prevent using non-`IO`-safe `throw` operations in `IO`. This also tries to
---   give a helpful error message when someone tries.
+-- | Tries to prevent using non-`IO`-safe `throw` operations in `IO`. It covers
+--   the standard transformers, but still can't /guarantee/ that there's no `IO`
+--   in the stack, in which case the constraint name at least gives an extra
+--   hint to callers. The constraint may need to be propagated and it also tries
+--   to give a helpful error message when it fails.
 type family NotInIO a :: Constraint where
+  -- The bulk of the cases are the long way of saying
+  -- @`MonadIO` m => m a = `TypeError` ...@ but without being able to catch any
+  -- instances we don't know about a priori.
   NotInIO (IO a) =
     TypeError
     ('Text "Can't use a `throw` function in `" ':<>:
      ShowType (IO a) ':<>:
      'Text "`." ':$$:
      'Text "Try using the `throwIO` variant instead.")
+  NotInIO (AccumT w m a) = NotInIO (m (a, w))
+  NotInIO (ContT _ _m a) = ()
+  NotInIO (ExceptT e m a) = NotInIO (m (Either e a))
+  NotInIO (IdentityT m a) = NotInIO (m a)
+  NotInIO (MaybeT m a) = NotInIO (m (Maybe a))
+  NotInIO (ReaderT _ m a) = NotInIO (m a)
+  NotInIO (SelectT _ m a) = NotInIO (m a)
+  NotInIO (CPS.RWST _ w s m a) = NotInIO (m (a, s, w))
+  NotInIO (CPS.WriterT w m a) = NotInIO (m (a, w))
+  NotInIO (Lazy.RWST _ w s m a) = NotInIO (m (a, s, w))
+  NotInIO (Lazy.StateT s m a) = NotInIO (m (a, s))
+  NotInIO (Lazy.WriterT w m a) = NotInIO (m (a, w))
+  NotInIO (Strict.RWST _ w s m a) = NotInIO (m (a, s, w))
+  NotInIO (Strict.StateT s m a) = NotInIO (m (a, s))
+  NotInIO (Strict.WriterT w m a) = NotInIO (m (a, w))
+  -- and otherwise we're safe ... relatively
   NotInIO _ = ()
 
 -- | Throws any type. The provided function is what's used for serialization if
 --   the exception isn't caught.
-throwFailure :: (Show e, Typeable e, NotInIO a) => (e -> String) -> e -> a
+throwFailure :: (Typeable e, NotInIO a) => (e -> String) -> e -> a
 throwFailure f = throw . ExceptFailure f
 
 -- | See `throwFailure`.
-throwIOFailure :: (Show e, Typeable e) => (e -> String) -> e -> IO a
+throwIOFailure :: Typeable e => (e -> String) -> e -> IO a
 throwIOFailure f = throwIO . ExceptFailure f
 
 -- | Throws an exception that's expecting to carry a `CallStack`.
